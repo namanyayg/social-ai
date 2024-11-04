@@ -4,52 +4,47 @@ import { Domains, TOAST_CLASSNAME } from "./constants";
 import { HashtagOptions } from "./options";
 import { WELCOME_PAGE } from "./constants";
 import { createPrompt, generateErrorMessage } from "./generators";
+import OpenAI from "openai";
 
 export const getComment = async (
   config: Config,
   domain: Domains,
   content: string
 ): Promise<string> => {
-  const body = {
-    model: `text-davinci-00${config["opt-model-type"]}`,
-    prompt: createPrompt(domain, config, content),
-    temperature: 0,
-    max_tokens: 3000,
-  };
+  const openai = new OpenAI({
+    apiKey: config["social-comments-openapi-key"],
+    dangerouslyAllowBrowser: true
+  });
 
-  const options = {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config["social-comments-openapi-key"]}`,
-    },
-    body: JSON.stringify(body),
-  };
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [{ role: "user", content: createPrompt(domain, config, content) }],
+      temperature: 0,
+      max_tokens: 3000,
+    });
 
-  const resp = await fetch("https://api.openai.com/v1/completions", options);
-  const chatGPTResp = await resp.json();
+    let comment = completion.choices[0]?.message?.content || "";
+    comment = comment.trim().replace(/(^"|"$)/g, "");
 
-  if (!resp.ok) {
-    const { title, message } = generateErrorMessage(resp.status);
+    if (config["opt-hashtag-option"] === HashtagOptions.NO) {
+      comment = comment.replace(/#\w+/g, "").replace("Comment: ", "");
+    }
+
+    return comment;
+  } catch (error: any) {
+    const status = error?.status || 500;
+    const { title, message } = generateErrorMessage(status);
+    console.log(error);
     notyf?.error({
       duration: 0,
       dismissible: true,
-      message: `<div class="title">${title}</div><p>${message}</p><p class="small">See <a href="https://help.openai.com/en/articles/6891839-api-error-code-guidance" target="_blank">OpenAI API error guidance</a> for more info.</p>`,
+      message: `<div class="title">ERROR${title}</div><p>${message}</p><p class="small">See <a href="https://help.openai.com/en/articles/6891839-api-error-code-guidance" target="_blank">OpenAI API error guidance</a> for more info.</p>`,
       className: `${TOAST_CLASSNAME} ${domain.replace(/([.]\w+)$/, "")}`,
       ripple: false,
     });
     return "";
   }
-
-  let comment = (chatGPTResp?.["choices"]?.[0]?.["text"] || "")
-    .replace(/^\s+|\s+$/g, "")
-    .replace(/(^"|"$)/g, "");
-
-  if (config["opt-hashtag-option"] === HashtagOptions.NO) {
-    comment = comment.replace(/#\w+/g, "");
-  }
-
-  return comment;
 };
 
 export const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
